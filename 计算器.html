@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Calculator</title>
+    <style>
+        /* 全局样式 - 仿小米UI */
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #ffffff;
+            font-family: 'Roboto', 'Helvetica Neue', Arial, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            color: #212121;
+        }
+
+        /* 显示区域 */
+        .display-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: flex-end;
+            align-items: flex-end;
+            padding: 20px 30px;
+            word-break: break-all;
+        }
+
+        /* 历史记录/过程显示 (小字) */
+        .history {
+            font-size: 1.5rem;
+            color: #9e9e9e;
+            margin-bottom: 10px;
+            min-height: 1.5rem;
+        }
+
+        /* 当前结果 (大字) */
+        .result {
+            font-size: 4.5rem;
+            font-weight: 300;
+            line-height: 1.1;
+        }
+
+        /* 键盘区域 */
+        .keypad {
+            background-color: #ffffff;
+            padding-bottom: 30px;
+            padding-left: 15px;
+            padding-right: 15px;
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+        }
+
+        /* 按钮样式 */
+        button {
+            border: none;
+            outline: none;
+            background-color: #f9f9f9; /* 浅灰背景 */
+            font-size: 1.8rem;
+            color: #212121;
+            border-radius: 50%; /* 圆形按钮 */
+            aspect-ratio: 1 / 1; /* 保持正圆 */
+            cursor: pointer;
+            transition: background-color 0.1s;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-weight: 500;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        button:active {
+            background-color: #e0e0e0;
+        }
+
+        /* 运算符列颜色 (橙色) */
+        button.operator {
+            background-color: #f9f9f9; 
+            color: #ff6d00;
+            font-size: 2rem;
+        }
+        
+        /* 等号特殊样式 */
+        button.equal-btn {
+            background-color: #ff6d00;
+            color: white;
+            font-size: 2rem;
+        }
+        button.equal-btn:active {
+            background-color: #e65100;
+        }
+
+        /* 功能键 (AC, 删除, %) */
+        button.func-btn {
+            color: #ff6d00;
+            font-size: 1.5rem;
+        }
+
+        /* 数字键加粗一点 */
+        button.number-btn {
+            font-weight: 400;
+            font-size: 2rem;
+        }
+
+        /* 适配小屏幕 */
+        @media (max-height: 600px) {
+            .result { font-size: 3.5rem; }
+            button { font-size: 1.5rem; }
+            .keypad { gap: 10px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="display-container">
+        <div class="history" id="history"></div>
+        <div class="result" id="display">0</div>
+    </div>
+
+    <div class="keypad">
+        <button class="func-btn" onclick="clearDisplay()">AC</button>
+        <button class="func-btn" onclick="backspace()">&#9003;</button>
+        <button class="func-btn" onclick="appendOperator('%')">%</button>
+        <button class="operator" onclick="appendOperator('/')">&div;</button>
+
+        <button class="number-btn" onclick="appendNumber('7')">7</button>
+        <button class="number-btn" onclick="appendNumber('8')">8</button>
+        <button class="number-btn" onclick="appendNumber('9')">9</button>
+        <button class="operator" onclick="appendOperator('*')">&times;</button>
+
+        <button class="number-btn" onclick="appendNumber('4')">4</button>
+        <button class="number-btn" onclick="appendNumber('5')">5</button>
+        <button class="number-btn" onclick="appendNumber('6')">6</button>
+        <button class="operator" onclick="appendOperator('-')">&minus;</button>
+
+        <button class="number-btn" onclick="appendNumber('1')">1</button>
+        <button class="number-btn" onclick="appendNumber('2')">2</button>
+        <button class="number-btn" onclick="appendNumber('3')">3</button>
+        <button class="operator" onclick="appendOperator('+')">+</button>
+
+        <button class="func-btn" onclick="toggleSign()">&#177;</button>
+        <button class="number-btn" onclick="appendNumber('0')">0</button>
+        <button class="number-btn" onclick="appendNumber('.')">.</button>
+        <button class="equal-btn" onclick="calculate()">=</button>
+    </div>
+
+    <script>
+        // --- 计算器核心状态 ---
+        let currentInput = '0';
+        let previousInput = '';
+        let operator = null;
+        let shouldResetScreen = false;
+        
+        // --- 魔术状态 ---
+        let equalTapCount = 0; // 等号点击计数
+        let isMagicLocked = false; // 是否进入锁定状态
+        let savedMagicValue = 0; // 锁定前保存的数值
+        let tapResetTimer = null; // 用于重置点击计数的定时器（防止间隔太久也触发）
+
+        const displayEl = document.getElementById('display');
+        const historyEl = document.getElementById('history');
+
+        // 更新屏幕显示
+        function updateDisplay() {
+            displayEl.innerText = formatNumber(currentInput);
+            
+            // 更新历史公式显示
+            if (operator != null) {
+                historyEl.innerText = `${formatNumber(previousInput)} ${convertOp(operator)}`;
+            } else {
+                historyEl.innerText = '';
+            }
+        }
+
+        // 数字格式化（加逗号，类似 1,000）
+        function formatNumber(numStr) {
+            if (numStr === Error) return "Error";
+            if (!numStr) return '0';
+            // 如果正在输入小数点，直接返回
+            if (String(numStr).endsWith('.')) return numStr; 
+            // 简单的格式化，防止过长数字科学计数法
+            const num = parseFloat(numStr);
+            if (isNaN(num)) return '0';
+            // 只有当不仅是输入过程中的字符串时才格式化
+            if (String(numStr).includes('.')) return numStr; 
+            return num.toLocaleString('en-US', {maximumFractionDigits: 10});
+        }
+
+        function convertOp(op) {
+            if (op === '/') return '÷';
+            if (op === '*') return '×';
+            if (op === '-') return '-';
+            if (op === '+') return '+';
+            return '';
+        }
+
+        // --- 输入处理 ---
+
+        function appendNumber(number) {
+            resetMagicTaps(); // 按了非等号键，重置计数
+
+            if (currentInput === '0' || shouldResetScreen) {
+                currentInput = number;
+                shouldResetScreen = false;
+            } else {
+                if (number === '.' && currentInput.includes('.')) return;
+                currentInput += number;
+            }
+            updateDisplay();
+        }
+
+        function appendOperator(op) {
+            resetMagicTaps(); // 按了非等号键，重置计数
+
+            if (operator !== null) calculate(true); // 如果已经有运算符，先计算中间结果
+            previousInput = currentInput;
+            operator = op;
+            shouldResetScreen = true;
+            updateDisplay();
+        }
+
+        function clearDisplay() {
+            resetMagicTaps();
+            currentInput = '0';
+            previousInput = '';
+            operator = null;
+            historyEl.innerText = '';
+            // AC 不会清除魔术锁定状态，防止误触导致表演失败
+            // 只有刷新页面或完整走完魔术流程才会清除锁定
+            updateDisplay();
+        }
+
+        function backspace() {
+            resetMagicTaps();
+            if (shouldResetScreen) return;
+            if (currentInput.length === 1) {
+                currentInput = '0';
+            } else {
+                currentInput = currentInput.slice(0, -1);
+            }
+            updateDisplay();
+        }
+
+        function toggleSign() {
+            resetMagicTaps();
+            currentInput = String(parseFloat(currentInput) * -1);
+            updateDisplay();
+        }
+
+        // --- 核心计算与魔术逻辑 ---
+
+        function calculate(isIntermediate = false) {
+            // 1. 处理连续点击逻辑
+            if (!isIntermediate) { // 只有直接点等号才算
+                equalTapCount++;
+                
+                // 设置一个短定时器，如果超过1秒没按，重置计数（可选，为了体验更像普通计算器）
+                clearTimeout(tapResetTimer);
+                tapResetTimer = setTimeout(() => {
+                    equalTapCount = 0;
+                }, 2000); // 2秒内连续点击有效
+            }
+
+            // 2. 正常计算逻辑
+            let result = 0;
+            const prev = parseFloat(previousInput);
+            const current = parseFloat(currentInput);
+
+            if (isNaN(prev) || isNaN(current)) {
+                 // 如果没有运算符，直接点等号，保持当前数字
+                 if(!isIntermediate) {
+                     // Check magic trigger even without operator
+                     checkMagicTrigger(current);
+                 }
+                 return;
+            }
+
+            switch (operator) {
+                case '+': result = prev + current; break;
+                case '-': result = prev - current; break;
+                case '*': result = prev * current; break;
+                case '/': result = prev / current; break;
+                case '%': result = prev % current; break;
+                default: return;
+            }
+
+            // 更新显示结果
+            currentInput = String(result);
+            operator = null;
+            previousInput = '';
+            shouldResetScreen = true;
+            updateDisplay();
+            historyEl.innerText = '';
+
+            // 3. 检查魔术触发
+            if (!isIntermediate) {
+                checkMagicTrigger(result);
+            }
+        }
+
+        // --- 魔术触发器 ---
+        function checkMagicTrigger(currentScreenValue) {
+            if (equalTapCount === 3) {
+                // 触发震动反馈（如果手机支持）
+                if (navigator.vibrate) navigator.vibrate(50);
+                
+                if (!isMagicLocked) {
+                    // >>> 激活锁定模式 <<<
+                    isMagicLocked = true;
+                    savedMagicValue = currentScreenValue;
+                    console.log("Magic Locked! Saved Value:", savedMagicValue);
+                    // 视觉上没有任何变化，继续显示 currentScreenValue
+                } else {
+                    // >>> 解除锁定并展示奇迹 <<<
+                    performMagicReveal();
+                    isMagicLocked = false;
+                }
+                
+                // 重置计数
+                equalTapCount = 0;
+            }
+        }
+
+        function performMagicReveal() {
+            // 获取当前时间 M-dd-HH-mm
+            const now = new Date();
+            const month = now.getMonth() + 1; // 1-12
+            const day = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+
+            // 组合时间数字：例如 2月16日 22点27分 -> 2162227
+            // 注意：月份通常不补0，除非是两位数，根据你的例子 "216..."
+            const timeString = `${month}${day}${hours}${minutes}`;
+            const timeValue = parseInt(timeString);
+
+            // 计算目标结果：(时间值) - (锁定前的值)
+            // 这样当观众把现在的显示值 + 锁定前的值，就会等于时间
+            const magicResult = timeValue - savedMagicValue;
+
+            // 强制更新屏幕
+            currentInput = String(magicResult);
+            operator = null;
+            previousInput = '';
+            shouldResetScreen = true;
+            updateDisplay();
+            historyEl.innerText = ''; // 清空历史，让结果看起来更像是一个定论
+            
+            console.log(`Magic Revealed! Time: ${timeString}, Saved: ${savedMagicValue}, Result: ${magicResult}`);
+        }
+
+        function resetMagicTaps() {
+            equalTapCount = 0;
+        }
+
+    </script>
+</body>
+</html>
